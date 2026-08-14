@@ -15,3 +15,12 @@ genres = ["Action", "Adventure", "Animation", "Comedy", "Crime", "Documentary",
 
 genre = st.selectbox("Pick a genre" , genres)
 
+if st.button("Find upcomming movies"):
+    try:
+        resonse =  requests.post(
+            N8N_WEBHOOK_URL,
+            json={"genre" : genre.lower().replace("-" , "").replace(" " , "")},
+            timeout=10
+        )
+    except requests.exceptions.RequestException as e:
+        st.error(f"Couldn't reach n8n: {e}")
