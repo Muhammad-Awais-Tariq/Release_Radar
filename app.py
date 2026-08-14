@@ -27,6 +27,13 @@ if st.button("Find upcomming movies"):
 
         movies = response.json()
 
-        
+        for movie in movies:
+            st.subheader(movie.get("title"))
+            st.write(f"{movie.get("release_date" , "TBA")}")
+            st.write(movie.get("overview", ""))
+            if movie.get("image"):
+                st.image(movie["image"])
+            st.divider()
+            
     except requests.exceptions.RequestException as e:
         st.error(f"Couldn't reach n8n: {e}")
