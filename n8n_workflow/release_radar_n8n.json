@@ -1,5 +1,5 @@
 {
-  "name": "My workflow",
+  "name": "Release Radar",
   "nodes": [
     {
       "parameters": {
@@ -82,7 +82,7 @@
     },
     {
       "parameters": {
-        "jsCode": "return $input.first().json.results.slice(0, 3).map(movie => ({\n  json: {\n    title: movie.title,\n    release_date: movie.release_date,\n    overview: movie.overview,\n    image: movie.poster_path ? `https://image.tmdb.org/t/p/w500${movie.poster_path}` : null\n  }\n}));"
+        "jsCode": "return [{\n  json: {\n    mood: $('Webhook').first().json.body.mood || \"no specific preference\",\n    candidates: $input.first().json.results.slice(0, 10).map(movie => ({\n      title: movie.title,\n      release_date: movie.release_date,\n      overview: movie.overview,\n      poster_path: movie.poster_path\n    }))\n  }\n}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -101,11 +101,58 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.5,
       "position": [
-        240,
+        880,
         0
       ],
       "id": "c9d6ef84-e5d6-4374-963c-164372cdc1fa",
       "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "models/gemini-3-flash-preview",
+          "cachedResultName": "models/gemini-3-flash-preview",
+          "cachedResultUrl": ""
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=You are a movie recommendation assistant helping a user decide what upcoming movie to watch.\n\nUser's mood/preference: {{ $json.mood }}\n\nHere is a list of upcoming movie candidates in JSON format:\n{{ JSON.stringify($json.candidates) }}\n\nYour task:\n1. Carefully consider the user's mood/preference. If it's vague or empty, use your best judgement based on the overviews to pick broadly appealing choices.\n2. Select exactly 3 movies from the candidates list that best match the user's mood.\n3. For each selected movie, write a short 1-2 sentence \"reason\" explaining why it fits the user's mood specifically — reference the overview or tone of the movie, not generic praise.\n4. Do NOT invent movies that aren't in the candidates list. Only choose from what was given.\n\nRespond with ONLY a raw JSON array, no markdown code fences, no extra commentary, no explanation outside the JSON. Use exactly this structure:\n\n[\n  {\n    \"title\": \"movie title from candidates\",\n    \"release_date\": \"release date from candidates\",\n    \"overview\": \"overview from candidates\",\n    \"poster_path\": \"poster_path from candidates\",\n    \"reason\": \"why this fits the user's mood\"\n  }\n]"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        0
+      ],
+      "id": "e06bbb68-272d-4fd1-abdb-7e1616d21ddc",
+      "name": "Message a model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "YDfZAdt3NEC49rg3",
+          "name": "Google Gemini(PaLM) Api account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json.content.parts[0].text;\nconst cleaned = raw.replace(/```json|```/g, \"\").trim();\nconst movies = JSON.parse(cleaned);\n\nreturn movies.map(movie => ({\n  json: {\n    title: movie.title,\n    release_date: movie.release_date,\n    overview: movie.overview,\n    reason: movie.reason,\n    image: movie.poster_path ? `https://image.tmdb.org/t/p/w500${movie.poster_path}` : null\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        624,
+        0
+      ],
+      "id": "f3540d42-ba6b-40a4-9572-94e273c1a05f",
+      "name": "Code in JavaScript1"
     }
   ],
   "pinData": {},
@@ -147,6 +194,28 @@
       "main": [
         [
           {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
             "node": "Respond to Webhook",
             "type": "main",
             "index": 0
@@ -161,8 +230,9 @@
     "binaryMode": "separate",
     "availableInMCP": false
   },
-  "versionId": "79fe245c-ce08-4eba-898e-597a08708706",
+  "versionId": "3f3fa6f1-3e99-425d-b565-10664a342800",
   "meta": {
+    "templateCredsSetupCompleted": true,
     "instanceId": "3e9270792e66ca50f5cf2ab91976c70ebb095749cf1eb5c05e95d557c79d0d13"
   },
   "nodeGroups": [],
