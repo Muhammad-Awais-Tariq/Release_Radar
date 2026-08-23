@@ -1,0 +1,228 @@
+{
+  "name": "Release Radar (Agentic)",
+  "nodes": [
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ \"Find upcoming movies for TMDB genre id \" + $json.genre_id + \". User's mood/preference: '\" + ($('Webhook1').first().json.body.mood || \"no specific preference\") + \"'. Today's date is \" + $today.toFormat('yyyy-MM-dd') + \".\" }}",
+        "options": {
+          "systemMessage": "You are a movie recommendation agent. You have access to a TMDB search tool. Use it to find upcoming movie candidates for the given genre.\n\nRules:\n1. Call the TMDB search tool to fetch candidates. If the results are too few (fewer than 5) or don't seem to fit the user's mood well, call the tool again with different parameters (e.g. a wider min_date, or a different sort_by such as popularity.desc instead of primary_release_date.asc). You may call the tool up to 3 times.\n2. Once you have good candidates, pick exactly 3 movies that best match the user's mood. If mood is vague or empty, pick broadly appealing choices based on the overviews.\n3. For each pick, write a short 1-2 sentence 'reason' tied to the movie's actual overview/tone - not generic praise.\n4. Never invent a movie that wasn't returned by the tool.\n5. Respond with ONLY a raw JSON array, no markdown code fences, no commentary outside the JSON. Use exactly this structure:\n[\n  {\n    \"title\": \"movie title\",\n    \"release_date\": \"release date\",\n    \"overview\": \"overview\",\n    \"poster_path\": \"poster_path\",\n    \"reason\": \"why this fits the user's mood\"\n  }\n]"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        288,
+        192
+      ],
+      "id": "ddc93d65-42aa-4d1c-b050-befc4b6d3441",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-3-flash-preview",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        288,
+        448
+      ],
+      "id": "b14dfeee-be60-4cb9-809a-65b7ed59ba87",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "YDfZAdt3NEC49rg3",
+          "name": "Google Gemini(PaLM) Api account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Searches TMDB for upcoming movies. Call this to get candidate movies. You can call it multiple times with different parameters if the first results are too few or don't fit the mood well.",
+        "url": "https://api.themoviedb.org/3/discover/movie",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "parametersQuery": {
+          "values": [
+            {
+              "name": "with_genres"
+            },
+            {
+              "name": "sort_by"
+            },
+            {
+              "name": "primary_release_date.gte"
+            }
+          ]
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        432,
+        448
+      ],
+      "id": "47fbd775-67d6-4680-970e-a14ba3b68a9b",
+      "name": "TMDB Search Tool",
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "TKzQX12viwlbNZne",
+          "name": "Query Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "discover",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -224,
+        192
+      ],
+      "id": "a421166d-d948-44be-a81e-1276adb4b235",
+      "name": "Webhook1",
+      "webhookId": "681c97e2-fd66-4bc4-8c90-4b689b74b743"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "53cb8a39-9cae-4e28-b9f7-0f2d431d071f",
+              "name": "genre_id",
+              "value": "={{ {\"action\":28,\"adventure\":12,\"animation\":16,\"comedy\":35,\"crime\":80,\"documentary\":99,\"drama\":18,\"family\":10751,\"fantasy\":14,\"history\":36,\"horror\":27,\"music\":10402,\"mystery\":9648,\"romance\":10749,\"scifi\":878,\"thriller\":53,\"war\":10752,\"western\":37}[$json.body.genre.toLowerCase()] }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        64,
+        192
+      ],
+      "id": "ff2ae7fc-107f-45b1-bd56-58f48f9f1158",
+      "name": "Edit Fields1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json.output;\nconst cleaned = raw.replace(/```json|```/g, \"\").trim();\nconst movies = JSON.parse(cleaned);\n\nreturn movies.map(movie => ({\n  json: {\n    title: movie.title,\n    release_date: movie.release_date,\n    overview: movie.overview,\n    reason: movie.reason,\n    image: movie.poster_path ? `https://image.tmdb.org/t/p/w500${movie.poster_path}` : null\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        736,
+        192
+      ],
+      "id": "065ef982-b1f8-43ef-b356-46f17d34cda7",
+      "name": "Code in JavaScript2"
+    },
+    {
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        976,
+        192
+      ],
+      "id": "5250e0a9-4519-49b0-82fa-8cd3d88d4ca5",
+      "name": "Respond to Webhook1"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "TMDB Search Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook1": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields1": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript2": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "fd1cd920-5f93-4772-9039-585d7f93be44",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "3e9270792e66ca50f5cf2ab91976c70ebb095749cf1eb5c05e95d557c79d0d13"
+  },
+  "nodeGroups": [],
+  "id": "cwKSVIdcTGqbUVQr",
+  "tags": []
+}
