@@ -1,15 +1,15 @@
 # 🎬 Release Radar
 
-An AI-powered movie discovery app that tells you what's releasing soon — and *why* it's worth watching. Pick a genre and describe your mood, and an AI agent reviews a pool of upcoming movies and picks the 3 that actually fit, with a reason for each. Built with a **Streamlit** frontend and an **n8n** workflow as the backend, so the API keys and decision-making logic never touch the client side.
+An AI-powered movie discovery app that tells you what's releasing soon — and *why* it's worth watching. Pick a genre and describe your mood, and an **AI agent** searches a live movie database on its own terms, decides which 3 releases actually fit, and explains why. Built with a **Streamlit** frontend and an **n8n** workflow as the backend, so the API keys and decision-making logic never touch the client side.
 
 ## Features
 
 - Browse upcoming movie releases filtered by genre (Action, Horror, Sci-Fi, Comedy, and 14 more)
 - Describe your mood in plain language (e.g. *"something dark and slow-paced"*) and get picks tailored to it
-- An AI agent (Google Gemini) makes the actual selection not a fixed sort/filter reasoning over a pool of 10 candidates to choose the best 3
-- Every recommended movie comes with a short AI-written explanation of why it fits your mood
+- An **AI Agent** (Google Gemini) owns the search itself — it decides when and how to query TMDB (which sort order, which date range, whether to search again with different parameters), rather than being handed a fixed, pre-fetched list
+- The agent then reasons over whatever it finds and picks the best 3, writing a short AI-written explanation of why each fits your mood
 - Backend logic fully separated from the frontend via an n8n webhook
-- Importable n8n workflow the whole backend can be recreated in one click
+- Importable n8n workflow — the whole backend can be recreated in one click
 
 ## How the Program Works
 
@@ -26,14 +26,12 @@ n8n Webhook (backend)
 Genre name → TMDB genre ID
       │
       ▼
-TMDB API — fetch upcoming movies for that genre
-      │
-      ▼
-Shape a pool of 10 candidates + the user's mood
-      │
-      ▼
-AI Agent (Gemini) reads the candidates + mood,
-picks the best 3, and writes a reason for each
+AI Agent (Gemini) takes over:
+  - decides how to query TMDB (sort order, date range)
+  - calls the TMDB search tool
+  - if results are thin or don't fit the mood, searches again
+    with different parameters (up to 3 tries)
+  - picks the best 3 movies and writes a reason for each
       │
       ▼
 Parse AI response into clean movie objects
@@ -47,10 +45,9 @@ Streamlit renders 3 movie cards with AI reasoning
 
 - You pick a genre and (optionally) describe a mood in Streamlit, then click the button
 - Streamlit sends both as a POST request to the n8n webhook URL
-- n8n fetches a pool of upcoming movies from TMDB, then hands that pool — along with your mood — to an AI agent
-- The AI genuinely **decides** which 3 movies best fit, rather than the workflow applying a fixed rule like "take the top 3 by date"
+- n8n hands the genre and mood to an **AI Agent**, which has direct, autonomous access to a TMDB search tool — it isn't pre-fed a fixed list of candidates
+- The agent decides for itself what to search for, whether one search is enough, and which 3 movies genuinely fit — rather than the workflow applying a fixed rule like "take the top 3 by date"
 - The finished data (movies + AI reasoning) comes back as a JSON array, which Streamlit loops through and displays
-
 
 ## The n8n Workflow — Node by Node
 
@@ -62,18 +59,20 @@ The backend workflow lives in [`n8n_workflow/release_radar_n8n.json`](./n8n_work
 |---|---|---|
 | **Webhook** | Trigger | Listens for incoming `POST` requests at `/discover`. This is the entry point Streamlit calls into, carrying the user's `genre` and `mood`. |
 | **Edit Fields** | Set | Converts the genre name sent by Streamlit (e.g. `"horror"`) into the numeric genre ID TMDB expects (e.g. `27`), using a lookup map covering all 18 genres. |
-| **HTTP Request** | API Call | Calls TMDB's `/discover/movie` endpoint with the genre ID, sorts by `primary_release_date.asc`, and filters to only movies releasing on or after today. Authentication is handled via an n8n **Query Auth credential**, so the API key never appears in the workflow file itself. |
-| **Code in JavaScript** | Data Transform | Takes TMDB's full response and builds a pool of the **top 10 candidate movies** (title, release date, overview, poster path), paired with the user's `mood` (falling back to `"no specific preference"` if left blank). This pool not a final answer is what gets handed to the AI. |
-| **Message a model** | AI Agent (Google Gemini) | Reads the 10 candidates and the user's mood, then **decides** which 3 movies best match writing a short, specific reason for each pick. This is the decision-making step: the AI reasons over the overviews and tone of each film rather than following a fixed rule. |
-| **Code in JavaScript1** | Data Transform | Parses the AI's raw text response (stripping any markdown formatting) into clean JSON, and reshapes each movie into a simple object with `title`, `release_date`, `overview`, `reason`, and a fully-formed poster `image` URL. |
+| **AI Agent** | Agent (Google Gemini) | The core decision-maker. Given the genre ID, the user's mood (falling back to `"no specific preference"` if left blank), and today's date, it decides on its own whether and how to search TMDB — it can call the search tool up to 3 times with different parameters (wider date range, different sort order) if the first results are too few or don't fit the mood. Once satisfied, it picks exactly 3 movies and writes a short, specific reason for each, grounded only in real candidates it actually retrieved. |
+| **Google Gemini Chat Model** | Sub-node (LLM) | Plugs into the AI Agent as its reasoning engine (`gemini-3-flash-preview`). This is what the Agent "thinks" with — it has no direct connection in the main data flow, only into the Agent's Chat Model input. |
+| **TMDB Search Tool** | Sub-node (Tool) | Also plugs into the AI Agent, not the main flow — this is what the Agent calls. It wraps TMDB's `/discover/movie` endpoint, with `with_genres`, `sort_by`, and `primary_release_date.gte` left for the Agent itself to fill in at call time based on its own reasoning. Authentication is handled via an n8n **Query Auth credential**, so the API key never appears in the workflow file itself. |
+| **Code in JavaScript** | Data Transform | Parses the AI Agent's raw text output (stripping any markdown formatting) into clean JSON, and reshapes each movie into a simple object with `title`, `release_date`, `overview`, `reason`, and a fully-formed poster `image` URL. |
 | **Respond to Webhook** | Response | Sends the final array of 3 AI-picked movies back to whichever client called the webhook — configured to return **all incoming items**, not just the first one. |
 
-**Data flow summary:** `Webhook → Edit Fields → HTTP Request → Code in JavaScript → Message a model (Gemini) → Code in JavaScript1 → Respond to Webhook`
+**Data flow summary:** `Webhook → Edit Fields → AI Agent (Gemini + TMDB Search Tool) → Code in JavaScript → Respond to Webhook`
+
+> The TMDB fetch used to be a fixed, always-executed HTTP Request step that ran once before the AI ever saw the data. It's now a **tool** the Agent calls on its own — the Agent decides whether one search is enough or whether to retry with different parameters, which is what makes this an agentic workflow rather than a fixed automation pipeline.
 
 ## APIs Used
 
 - **[TMDB (The Movie Database)](https://www.themoviedb.org/documentation/api)** — provides all movie data: titles, release dates, overviews, and posters. Free to use with a developer API key.
-- **[Google Gemini](https://ai.google.dev/)** — powers the AI recommendation step. Free tier via Google AI Studio, no card required.
+- **[Google Gemini](https://ai.google.dev/)** — powers the AI Agent's reasoning and tool-calling. Free tier via Google AI Studio, no card required.
 
 ## File Structure
 
@@ -117,7 +116,7 @@ Release_Radar/
 3. Name: `api_key`
 4. Value: your TMDB API key
 5. Save
-6. Open the **HTTP Request** node in the imported workflow and link it to this new credential (Authentication → Generic Credential Type → Query Auth → select your credential)
+6. Open the **TMDB Search Tool** node in the imported workflow and link it to this new credential (Authentication → Generic Credential Type → Query Auth → select your credential)
 
 ### Step 3 — Add your Gemini API key as a credential
 
@@ -125,11 +124,11 @@ Release_Radar/
 2. Search for **Google Gemini(PaLM) Api**
 3. Paste your Gemini API key (from [aistudio.google.com/apikey](https://aistudio.google.com/apikey))
 4. Save
-5. Open the **Message a model** node and link it to this new credential
+5. Open the **Google Gemini Chat Model** node and link it to this new credential
 
 ### Step 4 — Activate the workflow
 
-1. Toggle **Publish/Active** at the top of the workflow canvas
+1. Toggle **Active** at the top of the workflow canvas
 2. Open the **Webhook** node → copy the **Production URL** (e.g. `http://localhost:5678/webhook/discover`)
 
 ### Step 5 — Set up the Streamlit app
@@ -162,17 +161,18 @@ Open the URL shown in the terminal (usually `http://localhost:8501`), pick a gen
 
 - Python
 - [Streamlit](https://streamlit.io/) — web UI framework
-- [n8n](https://n8n.io/) — workflow automation / backend orchestration
-- [TMDB API](https://www.themoviedb.org/documentation/api) — movie data source
-- [Google Gemini](https://ai.google.dev/) — AI agent for movie selection and reasoning
+- [n8n](https://n8n.io/) — workflow automation / agent orchestration
+- [TMDB API](https://www.themoviedb.org/documentation/api) — movie data source, exposed to the agent as a callable tool
+- [Google Gemini](https://ai.google.dev/) — powers the AI Agent's reasoning and tool-calling decisions
 - Docker — for running n8n locally
 - `requests` / `python-dotenv` — HTTP calls and environment config
 
 ## Notes
 
-- If the mood field is left blank, the AI falls back to picking broadly appealing movies based on the overviews alone.
+- If the mood field is left blank, the Agent falls back to picking broadly appealing movies based on the overviews alone.
 - The n8n workflow must be **Active** (published), not just saved, for the Production webhook URL to respond to real requests.
-- Both the TMDB and Gemini API keys are stored as n8n credentials and are never present in the exported workflow JSON safe to commit and share publicly.
+- Both the TMDB and Gemini API keys are stored as n8n credentials and are never present in the exported workflow JSON — safe to commit and share publicly.
+- The Agent can call the TMDB tool up to 3 times per request if it decides its first search wasn't good enough — this is visible in n8n's execution log under the AI Agent node.
 - Currently limited to movies; a games-discovery branch (via a game database API) is a planned extension.
 
 ## Author
